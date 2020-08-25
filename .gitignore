@@ -149,4 +149,7 @@ gradle-app.setting
 ### Gradle Patch ###
 **/build/
 
+#Ignore API keys
+src/main/java/ApiKeys.java
+
 # End of https://www.toptal.com/developers/gitignore/api/java,intellij,gradle
