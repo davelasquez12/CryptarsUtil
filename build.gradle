@@ -1,0 +1,22 @@
+plugins {
+    id 'java'
+}
+
+group 'com.cryptars'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.amazonaws:aws-lambda-java-core:1.2.0'
+    implementation 'com.amazonaws:aws-java-sdk-dynamodb:1.11.753'
+    runtimeOnly 'com.amazonaws:aws-lambda-java-log4j2:1.1.0'
+    implementation 'com.squareup.retrofit2:retrofit:2.8.1'
+    implementation 'com.google.code.gson:gson:2.8.6'
+    implementation 'com.squareup.retrofit2:converter-gson:2.8.1'
+    testImplementation group: 'junit', name: 'junit', version: '4.12'
+}
