@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 public class UpdateIcons {
-    public static final String TABLE_NAME = "CurrentCryptoPrices";
+    public static final String TABLE_NAME = "TradingPairs";
     private static DynamoDbClient dynamoDbClient;
 
     private static void initDynamoDbClient() {
@@ -39,7 +39,7 @@ public class UpdateIcons {
     }
 
     private static List<Map<String, AttributeValue>> getAssetListFromDynamoDb() {
-        ScanRequest scanRequest = ScanRequest.builder().tableName(TABLE_NAME).attributesToGet("AssetId").build();
+        ScanRequest scanRequest = ScanRequest.builder().tableName(TABLE_NAME).attributesToGet("Base").build();
         ScanResponse response = dynamoDbClient.scan(scanRequest);
 
         if(response.sdkHttpResponse().isSuccessful() && response.count() > 0) {
@@ -53,7 +53,7 @@ public class UpdateIcons {
         UpdateItemRequest updateItemRequest = UpdateItemRequest.builder().tableName(TABLE_NAME).build();
 
         for(Map<String, AttributeValue> asset : dbAssetList) {
-            String assetName = asset.get("AssetId").s().toUpperCase();
+            String assetName = asset.get("Base").s().toUpperCase();
             String iconUrl = iconUrlMap.get(assetName);
 
             if(iconUrl != null) {
@@ -65,11 +65,11 @@ public class UpdateIcons {
 
     private static void updateItemToDb(String assetName, String url, UpdateItemRequest updateItemRequest) {
         HashMap<String, AttributeValue> primaryKeyItem = new HashMap<>(2);
-        primaryKeyItem.put("AssetId", AttributeValue.builder().s(assetName).build());
+        primaryKeyItem.put("Base", AttributeValue.builder().s(assetName).build());
 
         HashMap<String, AttributeValueUpdate> iconUrlUpdate = new HashMap<>(2);
         AttributeValue attributeValue = AttributeValue.builder().s(url).build();
-        iconUrlUpdate.put("AssetIconUrl", AttributeValueUpdate.builder().value(attributeValue).action(AttributeAction.PUT).build());
+        iconUrlUpdate.put("BaseIconUrl", AttributeValueUpdate.builder().value(attributeValue).action(AttributeAction.PUT).build());
 
         updateItemRequest = updateItemRequest
                 .toBuilder()
