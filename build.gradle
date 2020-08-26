@@ -13,7 +13,7 @@ repositories {
 
 dependencies {
     implementation 'com.amazonaws:aws-lambda-java-core:1.2.0'
-    implementation 'com.amazonaws:aws-java-sdk-dynamodb:1.11.753'
+    implementation 'software.amazon.awssdk:dynamodb:2.14.4'
     runtimeOnly 'com.amazonaws:aws-lambda-java-log4j2:1.1.0'
     implementation 'com.squareup.retrofit2:retrofit:2.8.1'
     implementation 'com.google.code.gson:gson:2.8.6'
