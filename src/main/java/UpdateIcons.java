@@ -56,8 +56,8 @@ public class UpdateIcons {
             String assetName = asset.get("Base").s().toUpperCase();
             String iconUrl = iconUrlMap.get(assetName);
 
-            if(iconUrl != null) {
-                //store recorded urls to the CurrentCryptoPrices table in a new column "AssetIconUrl"
+            if(iconUrl != null && !AssetExclusionList.contains(assetName)) {
+                //store recorded urls to the CurrentCryptoPrices table in a new column "BaseIconUrl"
                 updateItemToDb(assetName, iconUrl, updateItemRequest);
             }
         }
