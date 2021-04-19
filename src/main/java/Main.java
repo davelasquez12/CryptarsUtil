@@ -49,7 +49,8 @@ public class Main {
                     new UpdateTradingPairs().run();
                     break;
                 case "3":
-                    AddAssetNames.run();
+                    PopulateSupportedAssets.run();
+                    break;
                 case "X":
                 case "x":
                     closeApp = true;
@@ -64,7 +65,7 @@ public class Main {
         System.out.println("\n---------------MAIN MENU---------------");
         System.out.println("[1] Update Asset Icons");
         System.out.println("[2] Update Trading Pairs");
-        System.out.println("[3] Add Asset Names To DB");
+        System.out.println("[3] Populate CryptarsSupportedAssets Table");
         System.out.println("[X] Close Application");
         System.out.println("-----------------------------------------");
         System.out.print("Select option (1, 2, etc): ");
