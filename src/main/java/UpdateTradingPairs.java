@@ -1,13 +1,15 @@
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.Put;
 import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
-import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
+import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -23,6 +25,7 @@ public class UpdateTradingPairs {
     private String optionSelected;
     private static final String TRADING_PAIRS_TABLE = "TradingPairs";
     private static final String CURRENT_CRYPTO_PRICES_TABLE = "CurrentCryptoPrices";
+    private static final String SUPPORTED_ASSETS_TABLE = "CryptarsSupportedAssets";
     private List<ErrorInfo> errorInfoList;
 
     public void run() {
@@ -38,7 +41,7 @@ public class UpdateTradingPairs {
                     System.out.println("Input format: base_quote1,quote2,...quoteN");
                     InputWrapper inputWrapper = parseInput();
                     if(inputWrapper != null) {
-                        addNewPairToDB(inputWrapper.base, inputWrapper.quotes);
+                        addNewPairDataToDB(inputWrapper.base, inputWrapper.quotes);
                         if(!errorInfoList.isEmpty()) {
                             for(ErrorInfo errorInfo : errorInfoList) {
                                 System.out.println(errorInfo.getMessage() + "\n");
@@ -101,7 +104,7 @@ public class UpdateTradingPairs {
         return null;
     }
 
-    private void addNewPairToDB(String base, Set<String> quotes) {
+    private void addNewPairDataToDB(String base, Set<String> quotes) {
         Asset asset = getAssetByBase(base);
 
         if(asset != null) {
@@ -111,33 +114,87 @@ public class UpdateTradingPairs {
             tradingPairItem.put("base", AttributeValue.builder().s(asset.getBase()).build());
             tradingPairItem.put("quotes", AttributeValue.builder().ss(quotes).build());
 
-            PutItemRequest putItemRequest = PutItemRequest.builder()
+            Put putTradingPairsObj = Put.builder()
                     .tableName(TRADING_PAIRS_TABLE)
                     .item(tradingPairItem)
                     .conditionExpression("attribute_not_exists(id)")
                     .build();
+            TransactWriteItem tradingPairWriteItem = TransactWriteItem.builder().put(putTradingPairsObj).build();
 
-            PutItemResponse putItemResponse = null;
+            TransactWriteItem supportedAssetsWriteItem = buildSupportedAssetsWriteItem(asset.getId());
+            if(supportedAssetsWriteItem == null) {
+                System.out.println("ERROR: supportedAssetsWriteItem is null");
+                return;
+            }
+
+            List<TransactWriteItem> updatedWriteItemsCCP = updateCCPTable(asset, quotes);
+            if(updatedWriteItemsCCP == null) {
+                System.out.println("ERROR: updatedWriteItemsCCP is null");
+                return;
+            }
+
+            List<TransactWriteItem> allTransactWriteItems = new ArrayList<>();
+            allTransactWriteItems.add(tradingPairWriteItem);
+            allTransactWriteItems.add(supportedAssetsWriteItem);
+            allTransactWriteItems.addAll(updatedWriteItemsCCP);
+
+            TransactWriteItemsRequest transactWriteItemsRequest = TransactWriteItemsRequest.builder().transactItems(allTransactWriteItems).build();
+            TransactWriteItemsResponse writeItemsResponse;
             try {
-                 putItemResponse = Main.getDynamoDbClient().putItem(putItemRequest);
+                writeItemsResponse = Main.getDynamoDbClient().transactWriteItems(transactWriteItemsRequest);
+                if(writeItemsResponse != null && writeItemsResponse.sdkHttpResponse().isSuccessful()) {
+                    System.out.println("Successfully updated the TradingPairs, CryptarsSupportedAssets, and CurrentCryptoPrices tables with the asset:\n\n" + asset + "\nQuotes: " + quotes + "\n");
+                }
+                else {
+                    errorInfoList.add(new ErrorInfo("Error: Failed to add asset: " + asset));
+                }
             }
             catch (ConditionalCheckFailedException e) {
                 System.out.println("The asset " + asset.getBase() + " with id \"" + asset.getId() + "\" already exists in the " + TRADING_PAIRS_TABLE + " table.");
                 errorInfoList.add(new ErrorInfo(e.getMessage()));
-                return;
             }
-
-            if(putItemResponse != null && !putItemResponse.sdkHttpResponse().isSuccessful()) {
-                errorInfoList.add(new ErrorInfo("Error: Failed to add asset: " + asset.toString()));
-                return;
+            catch (TransactionCanceledException e) {
+                for(CancellationReason cancellationReason : e.cancellationReasons()) {
+                    errorInfoList.add(new ErrorInfo("Cancellation reason: " + cancellationReason.message()));
+                }
             }
-
-            System.out.println("Successfully added new trading pair to DB (" + TRADING_PAIRS_TABLE + "):\n\nAsset: " + asset.toString() + "\nQuotes: " + quotes + "\n");
-            updateCCPTable(asset, quotes);
         }
         else {
             System.out.println("Asset not found in Main.assetMap with the provided base OR action was canceled.");
         }
+    }
+
+    private TransactWriteItem buildSupportedAssetsWriteItem(String assetIdToAdd) {
+        Map<String, AttributeValue> key = new HashMap<>(3);
+        key.put("asset_type", AttributeValue.builder().s("crypto").build());
+
+        GetItemRequest getItemRequest = GetItemRequest.builder()
+                .tableName(SUPPORTED_ASSETS_TABLE)
+                .key(key)
+                .attributesToGet("id_set")
+                .build();
+
+        GetItemResponse response = Main.getDynamoDbClient().getItem(getItemRequest);
+        if(response != null && response.sdkHttpResponse().isSuccessful() && response.hasItem()) {
+            List<String> currentAssetIds = response.item().get("id_set").ss();  //returns an immutable List so must copy over data to new Set
+
+            if(currentAssetIds != null && !currentAssetIds.isEmpty()) {
+                Set<String> updatedAssetIds = new HashSet<>(currentAssetIds.size() * 2 + 1);
+                updatedAssetIds.addAll(currentAssetIds);
+                updatedAssetIds.add(assetIdToAdd);
+
+                Map<String, AttributeValue> updatedAssetIdListItem = new HashMap<>(5);
+                updatedAssetIdListItem.put("asset_type", AttributeValue.builder().s("crypto").build());
+                updatedAssetIdListItem.put("id_set", AttributeValue.builder().ss(updatedAssetIds).build());
+
+                Put putSupportedAssetsObj = Put.builder().tableName(SUPPORTED_ASSETS_TABLE)
+                        .item(updatedAssetIdListItem)
+                        .build();
+
+                return TransactWriteItem.builder().put(putSupportedAssetsObj).build();
+            }
+        }
+        return null;
     }
 
     /*
@@ -145,7 +202,7 @@ public class UpdateTradingPairs {
     * 2. Add new asset data for each quote specified
     * 3. Save updated items back to CCP table
     * */
-    private void updateCCPTable(Asset asset, Set<String> quotes) {  //todo: move this method to a class UpdateCCPTable
+    private List<TransactWriteItem> updateCCPTable(Asset asset, Set<String> quotes) {  //todo: move this method to a class UpdateCCPTable
         List<Map<String, AttributeValue>> updatedItems = new ArrayList<>(quotes.size());
         ScanRequest scanRequest = ScanRequest.builder().tableName(CURRENT_CRYPTO_PRICES_TABLE).build();
         ScanResponse scanResponse = Main.getDynamoDbClient().scan(scanRequest);
@@ -161,31 +218,21 @@ public class UpdateTradingPairs {
             }
 
             if(updatedItems.size() == quotes.size()) {
-                List<WriteRequest> writeRequestItems = new ArrayList<>(quotes.size());
-                Map<String, List<WriteRequest>> itemsWrapper = new HashMap<>(3);
+                List<TransactWriteItem> transactWriteItems = new ArrayList<>(quotes.size());
 
                 for(Map<String, AttributeValue> updatedItem : updatedItems) {
-                    WriteRequest writeRequest = WriteRequest
-                            .builder()
-                            .putRequest(PutRequest.builder().item(updatedItem).build())
-                            .build();
-                    writeRequestItems.add(writeRequest);
+                    Put transactPutObj = Put.builder().tableName(CURRENT_CRYPTO_PRICES_TABLE).item(updatedItem).build();
+                    TransactWriteItem transactWriteItem = TransactWriteItem.builder().put(transactPutObj).build();
+                    transactWriteItems.add(transactWriteItem);
                 }
 
-                itemsWrapper.put(CURRENT_CRYPTO_PRICES_TABLE, writeRequestItems);
-                BatchWriteItemRequest batchWriteItemRequest = BatchWriteItemRequest.builder().requestItems(itemsWrapper).build();
-                BatchWriteItemResponse response = Main.getDynamoDbClient().batchWriteItem(batchWriteItemRequest);
-
-                if(response.sdkHttpResponse().isSuccessful()) {
-                    System.out.println("\nSuccessfully saved " + asset.getBase() + " to the " + CURRENT_CRYPTO_PRICES_TABLE + " table!");
-                } else {
-                    errorInfoList.add(new ErrorInfo("ERROR: updateCCPTable :: failed to update " + asset.getBase() + " to the " + CURRENT_CRYPTO_PRICES_TABLE + " table."));
-                }
+                return transactWriteItems;
             }
             else {
                 errorInfoList.add(new ErrorInfo("ERROR :: updateCCPTable :: 1 or more quotes was not able to be processed, so aborting update to the " + CURRENT_CRYPTO_PRICES_TABLE + " table."));
             }
         }
+        return null;
     }
 
     private Map<String, AttributeValue> buildCopyOfItemAndAddNewAsset(Map<String, AttributeValue> item, Asset assetToAdd) {
